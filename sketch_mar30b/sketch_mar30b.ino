@@ -1,23 +1,25 @@
 #include <ESP8266WiFi.h>
 #include <FirebaseESP8266.h>
-
-// WiFi Credentials
-#define WIFI_SSID "FabLab UKFCET"
-#define WIFI_PASSWORD "Ucars@2024"
+#include <WiFiManager.h> // https://github.com/tzapu/WiFiManager
 
 // Firebase Credentials
-#define FIREBASE_HOST "https://homeauto-4c25b-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_HOST "homeauto-4c25b-default-rtdb.asia-southeast1.firebasedatabase.app"
 #define FIREBASE_AUTH "AIzaSyBLTQKUzS9nKvAfkJqYOi8I2mkcP_Rs4lY"
 
-// Corrected Pin Definitions (using GPIO numbers)
-#define LED_PIN 2        // GPIO2 (D4 on NodeMCU)
-#define SWITCH1_PIN 0    // GPIO0 (D3 on NodeMCU)
-#define SWITCH2_PIN 14   // GPIO14 (D5 on NodeMCU)
-#define SWITCH3_PIN 12   // GPIO12 (D6 on NodeMCU)
+// GPIO Pin Definitions
+#define LED_PIN        2   // D4
+#define SWITCH1_PIN    0   // D3
+#define SWITCH2_PIN   14   // D5
+#define SWITCH3_PIN   12   // D6
 
+// Firebase objects
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
+
+// Polling interval
+unsigned long lastCheckTime = 0;
+const unsigned long checkInterval = 200; // milliseconds
 
 void setup() {
   Serial.begin(115200);
@@ -28,66 +30,63 @@ void setup() {
   pinMode(SWITCH2_PIN, OUTPUT);
   pinMode(SWITCH3_PIN, OUTPUT);
 
-  // Set all pins to LOW initially
+  // Default all to LOW
   digitalWrite(LED_PIN, LOW);
   digitalWrite(SWITCH1_PIN, LOW);
   digitalWrite(SWITCH2_PIN, LOW);
   digitalWrite(SWITCH3_PIN, LOW);
 
-  // Connect to WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  // Setup WiFi with WiFiManager
+  WiFiManager wm;
+  // wm.resetSettings();  // ← Uncomment to clear saved WiFi settings
+  if (!wm.autoConnect("MyESP8266", "12345678")) {
+    Serial.println("❌ Failed to connect. Restarting...");
+    delay(3000);
+    ESP.restart();
   }
-  Serial.println("\nConnected: " + WiFi.localIP().toString());
 
-  // Set Firebase configuration
+  Serial.println("✅ WiFi Connected. IP: " + WiFi.localIP().toString());
+
+  // Firebase Setup
   config.host = FIREBASE_HOST;
   config.signer.tokens.legacy_token = FIREBASE_AUTH;
 
-  // Initialize Firebase
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
 }
 
 void loop() {
-  // Check and update LED status (using LED_STATUS)
-  if (Firebase.getInt(fbdo, "/LED_STATUS")) {
-    int status = fbdo.intData();
-    digitalWrite(LED_PIN, status);
-    Serial.println("Main LED Status: " + String(status));
-  } else {
-    Serial.println("Main LED Error: " + fbdo.errorReason());
-  }
+  unsigned long currentTime = millis();
 
-  // Check and update Switch 1 status (using LED_STATUS1)
-  if (Firebase.getInt(fbdo, "/LED_STATUS1")) {
-    int status = fbdo.intData();
-    digitalWrite(SWITCH1_PIN, status);
-    Serial.println("Switch 1 Status: " + String(status));
-  } else {
-    Serial.println("Switch 1 Error: " + fbdo.errorReason());
-  }
+  if (Firebase.ready() && (currentTime - lastCheckTime >= checkInterval)) {
+    lastCheckTime = currentTime;
 
-  // Check and update Switch 2 status (using LED_STATUS2)
-  if (Firebase.getInt(fbdo, "/LED_STATUS2")) {
-    int status = fbdo.intData();
-    digitalWrite(SWITCH2_PIN, status);
-    Serial.println("Switch 2 Status: " + String(status));
-  } else {
-    Serial.println("Switch 2 Error: " + fbdo.errorReason());
-  }
+    if (Firebase.getJSON(fbdo, "/")) {
+      FirebaseJson& json = fbdo.jsonObject();
+      FirebaseJsonData result;
 
-  // Check and update Switch 3 status (using LED_STATUS3)
-  if (Firebase.getInt(fbdo, "/LED_STATUS3")) {
-    int status = fbdo.intData();
-    digitalWrite(SWITCH3_PIN, status);
-    Serial.println("Switch 3 Status: " + String(status));
-  } else {
-    Serial.println("Switch 3 Error: " + fbdo.errorReason());
-  }
+      if (json.get(result, "LED_STATUS/status") && result.success) {
+        digitalWrite(LED_PIN, result.to<int>());
+        Serial.println("LED: " + result.to<String>());
+      }
 
-  delay(500); // Check every 0.5 seconds
+      if (json.get(result, "LED_STATUS1/status") && result.success) {
+        digitalWrite(SWITCH1_PIN, result.to<int>());
+        Serial.println("Switch1: " + result.to<String>());
+      }
+
+      if (json.get(result, "LED_STATUS2/status") && result.success) {
+        digitalWrite(SWITCH2_PIN, result.to<int>());
+        Serial.println("Switch2: " + result.to<String>());
+      }
+
+      if (json.get(result, "LED_STATUS3/status") && result.success) {
+        digitalWrite(SWITCH3_PIN, result.to<int>());
+        Serial.println("Switch3: " + result.to<String>());
+      }
+
+    } else {
+      Serial.println("❌ Firebase JSON Fetch Failed: " + fbdo.errorReason());
+    }
+  }
 }
